@@ -1,0 +1,135 @@
+#!/bin/sh
+
+#################################################################################
+#
+# Lynis Custom Plugin - File Permissions
+# Plugin ID:    CUS-FPERM
+# Description:  Checks critical file permission fields missing from default Lynis:
+#               - file_permissions_passwd
+#               - file_permissions_shadow
+#               - file_permissions_sudoers
+#               - file_permissions_sshd_config
+#               - file_permissions_crontab
+#               - file_permissions_hosts
+#
+# Author:       Custom
+# License:      GPL
+# Version:      1.0.0
+#
+# Usage:        Enable plugin in profile:
+#               plugin=plugin_file_permissions_phase1
+#
+#################################################################################
+
+PLUGIN_NAME="File Permissions"
+PLUGIN_AUTHOR="Custom"
+PLUGIN_VERSION="1.0.0"
+PLUGIN_ID="CUS-FPERM"
+PLUGIN_REQUIRED_OS="Linux"
+
+if [ "${PLUGIN_PHASE}" = "1" ]; then
+
+    InsertSection "Custom Plugin: File Permissions"
+
+    # Helper: get octal permissions of a file
+    GetFilePerms() {
+        FILE="$1"
+        if [ -f "${FILE}" ] || [ -d "${FILE}" ]; then
+            stat -c "%a" "${FILE}" 2>/dev/null || stat -f "%Lp" "${FILE}" 2>/dev/null || echo "unknown"
+        else
+            echo "missing"
+        fi
+    }
+
+    # Helper: check and report a file's permissions
+    # Args: test_no, file_path, report_key, expected_max_perms, description
+    CheckFilePerms() {
+        T_NO="$1"
+        FILE="$2"
+        KEY="$3"
+        EXPECTED="$4"
+        DESC="$5"
+
+        PERMS=$(GetFilePerms "${FILE}")
+        LogText "Result: ${FILE} permissions = ${PERMS}"
+        Report "${KEY}=${PERMS}"
+
+        if [ "${PERMS}" = "missing" ]; then
+            Display --indent 4 --text "- ${DESC}" --result "NOT FOUND" --color WHITE
+        elif [ "${PERMS}" = "unknown" ]; then
+            Display --indent 4 --text "- ${DESC}" --result "UNKNOWN" --color WHITE
+        else
+            # Compare numerically (lower or equal is better/tighter)
+            if [ "${PERMS}" -le "${EXPECTED}" ] 2>/dev/null; then
+                Display --indent 4 --text "- ${DESC} (${FILE})" --result "${PERMS} OK" --color GREEN
+            else
+                Display --indent 4 --text "- ${DESC} (${FILE})" --result "${PERMS} LOOSE" --color RED
+                ReportWarning "${T_NO}" "Permissions on ${FILE} are too permissive (${PERMS}, expected <= ${EXPECTED})"
+            fi
+        fi
+    }
+
+    # ------------------------------------------------------------------
+    # CUS-FPERM-001: /etc/passwd
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-FPERM-001" --weight M --network NO \
+        --category security --description "Check /etc/passwd permissions"
+    if [ ${SKIPTEST} -eq 0 ]; then
+        CheckFilePerms "${TEST_NO}" "/etc/passwd" "file_permissions_passwd" "644" "/etc/passwd"
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-FPERM-002: /etc/shadow
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-FPERM-002" --weight H --network NO \
+        --category security --description "Check /etc/shadow permissions"
+    if [ ${SKIPTEST} -eq 0 ]; then
+        CheckFilePerms "${TEST_NO}" "/etc/shadow" "file_permissions_shadow" "640" "/etc/shadow"
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-FPERM-003: /etc/sudoers
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-FPERM-003" --weight H --network NO \
+        --category security --description "Check /etc/sudoers permissions"
+    if [ ${SKIPTEST} -eq 0 ]; then
+        CheckFilePerms "${TEST_NO}" "/etc/sudoers" "file_permissions_sudoers" "440" "/etc/sudoers"
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-FPERM-004: /etc/ssh/sshd_config
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-FPERM-004" --weight H --network NO \
+        --category security --description "Check sshd_config permissions"
+    if [ ${SKIPTEST} -eq 0 ]; then
+        CheckFilePerms "${TEST_NO}" "/etc/ssh/sshd_config" "file_permissions_sshd_config" "600" "/etc/ssh/sshd_config"
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-FPERM-005: /etc/crontab
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-FPERM-005" --weight M --network NO \
+        --category security --description "Check /etc/crontab permissions"
+    if [ ${SKIPTEST} -eq 0 ]; then
+        CheckFilePerms "${TEST_NO}" "/etc/crontab" "file_permissions_crontab" "640" "/etc/crontab"
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-FPERM-006: /etc/hosts
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-FPERM-006" --weight L --network NO \
+        --category security --description "Check /etc/hosts permissions"
+    if [ ${SKIPTEST} -eq 0 ]; then
+        CheckFilePerms "${TEST_NO}" "/etc/hosts" "file_permissions_hosts" "644" "/etc/hosts"
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-FPERM-007: /etc/gshadow
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-FPERM-007" --weight M --network NO \
+        --category security --description "Check /etc/gshadow permissions"
+    if [ ${SKIPTEST} -eq 0 ]; then
+        CheckFilePerms "${TEST_NO}" "/etc/gshadow" "file_permissions_gshadow" "640" "/etc/gshadow"
+    fi
+
+fi # end phase 1

@@ -1,0 +1,190 @@
+#!/bin/sh
+
+#################################################################################
+#
+# Lynis Custom Plugin - Docker Security
+# Plugin ID:    CUS-DOCK
+# Description:  Checks Docker fields missing from default Lynis report:
+#               - docker_tcp_exposed
+#               - docker_privileged_containers
+#               - docker_containers_running
+#               - docker_images_count
+#               - docker_rootless_mode
+#               - docker_content_trust
+#
+# Author:       Custom
+# License:      GPL
+# Version:      1.0.0
+#
+# Usage:        Enable plugin in profile:
+#               plugin=plugin_docker_security_phase1
+#
+#################################################################################
+
+PLUGIN_NAME="Docker Security"
+PLUGIN_AUTHOR="Custom"
+PLUGIN_VERSION="1.0.0"
+PLUGIN_ID="CUS-DOCK"
+PLUGIN_REQUIRED_OS="Linux"
+
+if [ "${PLUGIN_PHASE}" = "1" ]; then
+
+    InsertSection "Custom Plugin: Docker Security"
+
+    DOCKER_BIN=$(which docker 2>/dev/null)
+    DOCKER_RUNNING=0
+
+    # Check if Docker daemon is running
+    if [ -n "${DOCKER_BIN}" ]; then
+        "${DOCKER_BIN}" info >/dev/null 2>&1 && DOCKER_RUNNING=1
+    fi
+
+    if [ ${DOCKER_RUNNING} -eq 0 ]; then
+        LogText "Docker not found or daemon not running - skipping Docker plugin tests"
+        Display --indent 4 --text "- Docker" --result "NOT FOUND/RUNNING" --color WHITE
+    else
+
+    # ------------------------------------------------------------------
+    # CUS-DOCK-001: Docker TCP socket exposed (unauthenticated)
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-DOCK-001" --weight H --network NO \
+        --category security --description "Check if Docker TCP socket is exposed"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        TCP_EXPOSED="no"
+        DOCKER_DAEMON_CFG="/etc/docker/daemon.json"
+
+        # Check daemon.json for tcp hosts
+        if [ -f "${DOCKER_DAEMON_CFG}" ]; then
+            if grep -q '"tcp://' "${DOCKER_DAEMON_CFG}" 2>/dev/null; then
+                TCP_EXPOSED="yes"
+            fi
+        fi
+
+        # Also check /lib/systemd/system/docker.service or overrides
+        for SVC_FILE in /lib/systemd/system/docker.service /etc/systemd/system/docker.service \
+                        /etc/systemd/system/docker.service.d/*.conf; do
+            [ -f "${SVC_FILE}" ] && grep -q "\-H tcp://\|--host tcp://" "${SVC_FILE}" 2>/dev/null && TCP_EXPOSED="yes"
+        done
+
+        # Check if port 2375 or 2376 is listening (common Docker ports)
+        if ss -tlnp 2>/dev/null | grep -qE ":2375|:2376"; then
+            TCP_EXPOSED="yes"
+        fi
+
+        LogText "Result: docker_tcp_exposed = ${TCP_EXPOSED}"
+        Report "docker_tcp_exposed=${TCP_EXPOSED}"
+
+        if [ "${TCP_EXPOSED}" = "yes" ]; then
+            Display --indent 4 --text "- Docker TCP socket exposed" --result "YES" --color RED
+            ReportWarning "${TEST_NO}" "Docker TCP socket is exposed - this allows unauthenticated remote access to Docker daemon"
+        else
+            Display --indent 4 --text "- Docker TCP socket exposed" --result "NO" --color GREEN
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-DOCK-002: Privileged containers
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-DOCK-002" --weight H --network NO \
+        --category security --description "Check for privileged Docker containers"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        PRIV_COUNT=0
+        PRIV_CONTAINERS=""
+
+        # List running containers and check for privileged flag
+        CONTAINERS=$(${DOCKER_BIN} ps -q 2>/dev/null)
+        for CID in ${CONTAINERS}; do
+            IS_PRIV=$(${DOCKER_BIN} inspect --format '{{.HostConfig.Privileged}}' "${CID}" 2>/dev/null)
+            if [ "${IS_PRIV}" = "true" ]; then
+                CNAME=$(${DOCKER_BIN} inspect --format '{{.Name}}' "${CID}" 2>/dev/null | sed 's|/||')
+                PRIV_COUNT=$(( PRIV_COUNT + 1 ))
+                PRIV_CONTAINERS="${PRIV_CONTAINERS} ${CNAME}"
+                LogText "Privileged container: ${CNAME} (${CID})"
+            fi
+        done
+
+        LogText "Result: docker_privileged_containers = ${PRIV_COUNT}"
+        Report "docker_privileged_containers=${PRIV_COUNT}"
+        [ -n "${PRIV_CONTAINERS}" ] && Report "docker_privileged_container_names=${PRIV_CONTAINERS}"
+
+        if [ ${PRIV_COUNT} -eq 0 ]; then
+            Display --indent 4 --text "- Privileged Docker containers" --result "NONE" --color GREEN
+        else
+            Display --indent 4 --text "- Privileged Docker containers" --result "${PRIV_COUNT} FOUND" --color RED
+            ReportWarning "${TEST_NO}" "Found ${PRIV_COUNT} privileged Docker container(s): ${PRIV_CONTAINERS}"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-DOCK-003: Running container count
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-DOCK-003" --weight L --network NO \
+        --category security --description "Count running Docker containers"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        RUNNING_COUNT=$(${DOCKER_BIN} ps -q 2>/dev/null | wc -l | tr -d ' ')
+
+        LogText "Result: docker_containers_running = ${RUNNING_COUNT}"
+        Report "docker_containers_running=${RUNNING_COUNT}"
+        Display --indent 4 --text "- Running Docker containers" --result "${RUNNING_COUNT}" --color WHITE
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-DOCK-004: Docker Content Trust
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-DOCK-004" --weight M --network NO \
+        --category security --description "Check Docker Content Trust setting"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        DCT_STATUS="disabled"
+
+        if [ "${DOCKER_CONTENT_TRUST}" = "1" ]; then
+            DCT_STATUS="enabled"
+        fi
+
+        LogText "Result: docker_content_trust = ${DCT_STATUS}"
+        Report "docker_content_trust=${DCT_STATUS}"
+
+        if [ "${DCT_STATUS}" = "enabled" ]; then
+            Display --indent 4 --text "- Docker Content Trust" --result "ENABLED" --color GREEN
+        else
+            Display --indent 4 --text "- Docker Content Trust" --result "DISABLED" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "Enable Docker Content Trust with DOCKER_CONTENT_TRUST=1 to verify image signatures"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-DOCK-005: Containers with host network
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-DOCK-005" --weight M --network NO \
+        --category security --description "Check for containers using host network mode"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        HOSTNET_COUNT=0
+
+        CONTAINERS=$(${DOCKER_BIN} ps -q 2>/dev/null)
+        for CID in ${CONTAINERS}; do
+            NET_MODE=$(${DOCKER_BIN} inspect --format '{{.HostConfig.NetworkMode}}' "${CID}" 2>/dev/null)
+            if [ "${NET_MODE}" = "host" ]; then
+                HOSTNET_COUNT=$(( HOSTNET_COUNT + 1 ))
+                CNAME=$(${DOCKER_BIN} inspect --format '{{.Name}}' "${CID}" 2>/dev/null | sed 's|/||')
+                LogText "Container with host network: ${CNAME}"
+            fi
+        done
+
+        LogText "Result: docker_host_network_containers = ${HOSTNET_COUNT}"
+        Report "docker_host_network_containers=${HOSTNET_COUNT}"
+
+        if [ ${HOSTNET_COUNT} -eq 0 ]; then
+            Display --indent 4 --text "- Containers with host network" --result "NONE" --color GREEN
+        else
+            Display --indent 4 --text "- Containers with host network" --result "${HOSTNET_COUNT} FOUND" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "Avoid host network mode in containers to maintain network isolation"
+        fi
+    fi
+
+    fi # end Docker running check
+
+fi # end phase 1

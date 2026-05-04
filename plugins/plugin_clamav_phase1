@@ -1,0 +1,178 @@
+#!/bin/sh
+
+#################################################################################
+#
+# Lynis Custom Plugin - ClamAV Antivirus
+# Plugin ID:    CUS-CLAM
+# Description:  Checks ClamAV fields missing from default Lynis report:
+#               - clamav_definitions_age_hours
+#               - clamav_last_scan_date
+#               - clamav_last_scan_result
+#               - clamav_daemon_running
+#               - clamav_freshclam_running
+#
+# Author:       Custom
+# License:      GPL
+# Version:      1.0.0
+#
+# Usage:        Enable plugin in profile:
+#               plugin=plugin_clamav_phase1
+#
+#################################################################################
+
+PLUGIN_NAME="ClamAV Antivirus"
+PLUGIN_AUTHOR="Custom"
+PLUGIN_VERSION="1.0.0"
+PLUGIN_ID="CUS-CLAM"
+PLUGIN_REQUIRED_OS="Linux"
+
+if [ "${PLUGIN_PHASE}" = "1" ]; then
+
+    InsertSection "Custom Plugin: ClamAV Antivirus"
+
+    # Common ClamAV database paths
+    CLAM_DB_DIRS="/var/lib/clamav /var/lib/clamav/main.cvd /var/lib/clamav/daily.cvd /usr/share/clamav"
+
+    # ------------------------------------------------------------------
+    # CUS-CLAM-001: ClamAV daemon running
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-CLAM-001" --weight M --network NO \
+        --category malware --description "Check if ClamAV daemon (clamd) is running"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        CLAMD_RUNNING="not_running"
+
+        if IsRunning clamd; then
+            CLAMD_RUNNING="running"
+        elif ${PSBINARY} ax 2>/dev/null | grep -q "[c]lamd"; then
+            CLAMD_RUNNING="running"
+        fi
+
+        LogText "Result: clamd running = ${CLAMD_RUNNING}"
+        Report "clamav_daemon_running=${CLAMD_RUNNING}"
+
+        if [ "${CLAMD_RUNNING}" = "running" ]; then
+            Display --indent 4 --text "- ClamAV daemon (clamd)" --result "RUNNING" --color GREEN
+        else
+            Display --indent 4 --text "- ClamAV daemon (clamd)" --result "NOT RUNNING" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "Start clamd for real-time ClamAV scanning"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-CLAM-002: freshclam running
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-CLAM-002" --weight M --network NO \
+        --category malware --description "Check if freshclam (definition updater) is running"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        FRESHCLAM_RUNNING="not_running"
+
+        if IsRunning freshclam; then
+            FRESHCLAM_RUNNING="running"
+        elif ${PSBINARY} ax 2>/dev/null | grep -q "[f]reshclam"; then
+            FRESHCLAM_RUNNING="running"
+        fi
+
+        LogText "Result: freshclam running = ${FRESHCLAM_RUNNING}"
+        Report "clamav_freshclam_running=${FRESHCLAM_RUNNING}"
+
+        if [ "${FRESHCLAM_RUNNING}" = "running" ]; then
+            Display --indent 4 --text "- freshclam (definition updater)" --result "RUNNING" --color GREEN
+        else
+            Display --indent 4 --text "- freshclam (definition updater)" --result "NOT RUNNING" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "Start freshclam to keep ClamAV definitions up to date"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-CLAM-003: Virus definition age
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-CLAM-003" --weight H --network NO \
+        --category malware --description "Check ClamAV virus definition age"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        DEF_AGE_HOURS="unknown"
+        DB_FILE=""
+
+        # Find most recently modified database file
+        for DIR in /var/lib/clamav; do
+            if [ -d "${DIR}" ]; then
+                DB_FILE=$(ls -t "${DIR}"/*.cvd "${DIR}"/*.cld 2>/dev/null | head -1)
+                [ -n "${DB_FILE}" ] && break
+            fi
+        done
+
+        if [ -n "${DB_FILE}" ] && [ -f "${DB_FILE}" ]; then
+            # Get file modification time in seconds since epoch
+            FILE_MTIME=$(stat -c "%Y" "${DB_FILE}" 2>/dev/null || stat -f "%m" "${DB_FILE}" 2>/dev/null)
+            CURRENT_TIME=$(date +%s)
+
+            if [ -n "${FILE_MTIME}" ] && [ -n "${CURRENT_TIME}" ]; then
+                AGE_SECS=$(( CURRENT_TIME - FILE_MTIME ))
+                DEF_AGE_HOURS=$(( AGE_SECS / 3600 ))
+            fi
+        fi
+
+        LogText "Result: ClamAV definition age = ${DEF_AGE_HOURS} hours"
+        Report "clamav_definitions_age_hours=${DEF_AGE_HOURS}"
+
+        if [ "${DEF_AGE_HOURS}" = "unknown" ]; then
+            Display --indent 4 --text "- ClamAV definition age" --result "UNKNOWN" --color WHITE
+            ReportSuggestion "${TEST_NO}" "ClamAV database files not found - install ClamAV and run freshclam"
+        elif [ "${DEF_AGE_HOURS}" -le 24 ] 2>/dev/null; then
+            Display --indent 4 --text "- ClamAV definition age" --result "${DEF_AGE_HOURS}h" --color GREEN
+        elif [ "${DEF_AGE_HOURS}" -le 72 ] 2>/dev/null; then
+            Display --indent 4 --text "- ClamAV definition age" --result "${DEF_AGE_HOURS}h" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "ClamAV definitions are ${DEF_AGE_HOURS} hours old - run freshclam"
+        else
+            Display --indent 4 --text "- ClamAV definition age" --result "${DEF_AGE_HOURS}h (STALE)" --color RED
+            ReportWarning "${TEST_NO}" "ClamAV definitions are ${DEF_AGE_HOURS} hours old - update immediately with freshclam"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-CLAM-004: Last scan date (via clamscan log)
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-CLAM-004" --weight M --network NO \
+        --category malware --description "Check last ClamAV scan date"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        LAST_SCAN="unknown"
+        LAST_SCAN_RESULT="unknown"
+
+        # Common log locations for clamscan
+        for LOG in /var/log/clamav/clamscan.log /var/log/clamscan.log /var/log/clamav/clamav.log; do
+            if [ -f "${LOG}" ]; then
+                # Look for last scan summary line
+                LAST_LINE=$(grep -i "Infected files:" "${LOG}" 2>/dev/null | tail -1)
+                if [ -n "${LAST_LINE}" ]; then
+                    # Get date of that line from the log (clamd logs timestamps)
+                    LAST_SCAN=$(grep -B5 "$(echo "${LAST_LINE}" | head -c 20)" "${LOG}" 2>/dev/null | grep -i "^---\|START\|scan" | tail -1 | awk '{print $1, $2}')
+                    [ -z "${LAST_SCAN}" ] && LAST_SCAN=$(stat -c "%y" "${LOG}" 2>/dev/null | cut -d' ' -f1)
+
+                    INFECTED=$(echo "${LAST_LINE}" | grep -o "[0-9]*" | head -1)
+                    [ "${INFECTED}" = "0" ] && LAST_SCAN_RESULT="clean" || LAST_SCAN_RESULT="infected:${INFECTED}"
+                    break
+                fi
+            fi
+        done
+
+        LogText "Result: ClamAV last scan = ${LAST_SCAN}, result = ${LAST_SCAN_RESULT}"
+        Report "clamav_last_scan_date=${LAST_SCAN}"
+        Report "clamav_last_scan_result=${LAST_SCAN_RESULT}"
+
+        if [ "${LAST_SCAN}" = "unknown" ]; then
+            Display --indent 4 --text "- ClamAV last scan" --result "NO LOG FOUND" --color WHITE
+            ReportSuggestion "${TEST_NO}" "Schedule regular ClamAV scans and ensure logging is enabled"
+        else
+            if [ "${LAST_SCAN_RESULT}" = "clean" ]; then
+                Display --indent 4 --text "- ClamAV last scan (${LAST_SCAN})" --result "CLEAN" --color GREEN
+            else
+                Display --indent 4 --text "- ClamAV last scan (${LAST_SCAN})" --result "${LAST_SCAN_RESULT}" --color RED
+                ReportWarning "${TEST_NO}" "ClamAV last scan found infected files: ${LAST_SCAN_RESULT}"
+            fi
+        fi
+    fi
+
+fi # end phase 1

@@ -1,0 +1,174 @@
+#!/bin/sh
+
+#################################################################################
+#
+# Lynis Custom Plugin - SSH Security
+# Plugin ID:    CUS-SSH
+# Description:  Checks SSH configuration fields missing from default Lynis report:
+#               - ssh_password_authentication
+#               - ssh_pubkey_authentication
+#               - ssh_permit_root_login
+#               - ssh_max_auth_tries
+#               - ssh_port
+#
+# Author:       Custom
+# License:      GPL
+# Version:      1.0.0
+#
+# Usage:        Enable plugin in profile:
+#               plugin=plugin_ssh_security_phase1
+#
+#################################################################################
+
+PLUGIN_NAME="SSH Security"
+PLUGIN_AUTHOR="Custom"
+PLUGIN_VERSION="1.0.0"
+PLUGIN_ID="CUS-SSH"
+PLUGIN_REQUIRED_OS="Linux"
+
+# -----------------------------------------------------------------------
+# Only run in phase 1
+# -----------------------------------------------------------------------
+if [ "${PLUGIN_PHASE}" = "1" ]; then
+
+    InsertSection "Custom Plugin: SSH Security"
+
+    SSH_CONFIG="/etc/ssh/sshd_config"
+    SSH_CONFIG_D="/etc/ssh/sshd_config.d"
+
+    # Helper: read a value from sshd_config (and .d/ includes)
+    GetSSHValue() {
+        KEY="$1"
+        VALUE=""
+        if [ -f "${SSH_CONFIG}" ]; then
+            VALUE=$(grep -i "^${KEY}" "${SSH_CONFIG}" | tail -1 | awk '{print $2}')
+        fi
+        # Also check include directory
+        if [ -z "${VALUE}" ] && [ -d "${SSH_CONFIG_D}" ]; then
+            VALUE=$(grep -rhi "^${KEY}" "${SSH_CONFIG_D}/" 2>/dev/null | tail -1 | awk '{print $2}')
+        fi
+        echo "${VALUE}"
+    }
+
+    # ------------------------------------------------------------------
+    # CUS-SSH-001: SSH Port
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-SSH-001" --weight L --network NO \
+        --category security --description "Check SSH port"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        SSH_PORT_VAL=$(GetSSHValue "Port")
+        [ -z "${SSH_PORT_VAL}" ] && SSH_PORT_VAL="22"
+
+        LogText "Result: SSH port is ${SSH_PORT_VAL}"
+        Report "ssh_port=${SSH_PORT_VAL}"
+
+        if [ "${SSH_PORT_VAL}" = "22" ]; then
+            Display --indent 4 --text "- SSH Port" --result "${SSH_PORT_VAL} (default)" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "Change SSH port from default 22 to reduce automated attacks"
+        else
+            Display --indent 4 --text "- SSH Port" --result "${SSH_PORT_VAL}" --color GREEN
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-SSH-002: SSH Password Authentication
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-SSH-002" --weight H --network NO \
+        --category security --description "Check SSH password authentication"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        VAL=$(GetSSHValue "PasswordAuthentication")
+        [ -z "${VAL}" ] && VAL="yes"  # OpenSSH default is yes
+        VAL_LOWER=$(echo "${VAL}" | tr '[:upper:]' '[:lower:]')
+
+        LogText "Result: PasswordAuthentication = ${VAL}"
+        Report "ssh_password_authentication=${VAL_LOWER}"
+
+        if [ "${VAL_LOWER}" = "no" ]; then
+            Display --indent 4 --text "- SSH PasswordAuthentication" --result "DISABLED" --color GREEN
+        else
+            Display --indent 4 --text "- SSH PasswordAuthentication" --result "ENABLED" --color RED
+            ReportWarning "${TEST_NO}" "SSH password authentication is enabled - prefer key-based auth"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-SSH-003: SSH PubkeyAuthentication
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-SSH-003" --weight H --network NO \
+        --category security --description "Check SSH public key authentication"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        VAL=$(GetSSHValue "PubkeyAuthentication")
+        [ -z "${VAL}" ] && VAL="yes"  # OpenSSH default is yes
+        VAL_LOWER=$(echo "${VAL}" | tr '[:upper:]' '[:lower:]')
+
+        LogText "Result: PubkeyAuthentication = ${VAL}"
+        Report "ssh_pubkey_authentication=${VAL_LOWER}"
+
+        if [ "${VAL_LOWER}" = "yes" ]; then
+            Display --indent 4 --text "- SSH PubkeyAuthentication" --result "ENABLED" --color GREEN
+        else
+            Display --indent 4 --text "- SSH PubkeyAuthentication" --result "DISABLED" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "Enable SSH public key authentication"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-SSH-004: SSH PermitRootLogin
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-SSH-004" --weight H --network NO \
+        --category security --description "Check SSH PermitRootLogin"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        VAL=$(GetSSHValue "PermitRootLogin")
+        [ -z "${VAL}" ] && VAL="prohibit-password"  # OpenSSH 8+ default
+        VAL_LOWER=$(echo "${VAL}" | tr '[:upper:]' '[:lower:]')
+
+        LogText "Result: PermitRootLogin = ${VAL}"
+        Report "ssh_permit_root_login=${VAL_LOWER}"
+
+        case "${VAL_LOWER}" in
+            "no")
+                Display --indent 4 --text "- SSH PermitRootLogin" --result "NO" --color GREEN
+                ;;
+            "prohibit-password"|"without-password")
+                Display --indent 4 --text "- SSH PermitRootLogin" --result "${VAL_LOWER}" --color YELLOW
+                ReportSuggestion "${TEST_NO}" "Set PermitRootLogin to 'no' for maximum security"
+                ;;
+            "yes")
+                Display --indent 4 --text "- SSH PermitRootLogin" --result "YES" --color RED
+                ReportWarning "${TEST_NO}" "Root login via SSH is permitted - this is a security risk"
+                ;;
+            *)
+                Display --indent 4 --text "- SSH PermitRootLogin" --result "${VAL_LOWER}" --color YELLOW
+                ;;
+        esac
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-SSH-005: SSH MaxAuthTries
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-SSH-005" --weight M --network NO \
+        --category security --description "Check SSH MaxAuthTries"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        VAL=$(GetSSHValue "MaxAuthTries")
+        [ -z "${VAL}" ] && VAL="6"  # OpenSSH default
+
+        LogText "Result: MaxAuthTries = ${VAL}"
+        Report "ssh_max_auth_tries=${VAL}"
+
+        if [ "${VAL}" -le 3 ] 2>/dev/null; then
+            Display --indent 4 --text "- SSH MaxAuthTries" --result "${VAL}" --color GREEN
+        elif [ "${VAL}" -le 6 ] 2>/dev/null; then
+            Display --indent 4 --text "- SSH MaxAuthTries" --result "${VAL}" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "Consider lowering MaxAuthTries to 3 or less"
+        else
+            Display --indent 4 --text "- SSH MaxAuthTries" --result "${VAL} (HIGH)" --color RED
+            ReportWarning "${TEST_NO}" "SSH MaxAuthTries is set high, increasing brute-force risk"
+        fi
+    fi
+
+fi # end phase 1

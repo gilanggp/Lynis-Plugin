@@ -1,0 +1,137 @@
+#!/bin/sh
+
+#################################################################################
+#
+# Lynis Custom Plugin - Sudo Security
+# Plugin ID:    CUS-SUDO
+# Description:  Checks sudo configuration fields missing from default Lynis:
+#               - auth_sudoers_nopasswd
+#               - sudo_log_enabled
+#               - sudo_requiretty
+#               - sudoers_wildcard_commands
+#
+# Author:       Custom
+# License:      GPL
+# Version:      1.0.0
+#
+# Usage:        Enable plugin in profile:
+#               plugin=plugin_sudo_security_phase1
+#
+#################################################################################
+
+PLUGIN_NAME="Sudo Security"
+PLUGIN_AUTHOR="Custom"
+PLUGIN_VERSION="1.0.0"
+PLUGIN_ID="CUS-SUDO"
+PLUGIN_REQUIRED_OS="Linux"
+
+if [ "${PLUGIN_PHASE}" = "1" ]; then
+
+    InsertSection "Custom Plugin: Sudo Security"
+
+    SUDOERS_FILE="/etc/sudoers"
+    SUDOERS_DIR="/etc/sudoers.d"
+
+    # Read all sudoers content (main file + drop-ins), skip comments
+    ReadSudoers() {
+        {
+            [ -f "${SUDOERS_FILE}" ] && grep -v "^#" "${SUDOERS_FILE}" 2>/dev/null
+            [ -d "${SUDOERS_DIR}" ] && grep -rh -v "^#" "${SUDOERS_DIR}/" 2>/dev/null
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # CUS-SUDO-001: NOPASSWD entries in sudoers
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-SUDO-001" --weight H --network NO \
+        --category security --description "Check for NOPASSWD in sudoers"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        NOPASSWD_LINES=$(ReadSudoers | grep -i "NOPASSWD" | grep -v "^$")
+        NOPASSWD_COUNT=$(echo "${NOPASSWD_LINES}" | grep -c "NOPASSWD" 2>/dev/null || echo 0)
+
+        LogText "Result: NOPASSWD entries found = ${NOPASSWD_COUNT}"
+        Report "auth_sudoers_nopasswd=${NOPASSWD_COUNT}"
+
+        if [ "${NOPASSWD_COUNT}" -eq 0 ] 2>/dev/null; then
+            Display --indent 4 --text "- Sudoers NOPASSWD entries" --result "NONE" --color GREEN
+        else
+            Display --indent 4 --text "- Sudoers NOPASSWD entries" --result "${NOPASSWD_COUNT} FOUND" --color RED
+            ReportWarning "${TEST_NO}" "NOPASSWD entries found in sudoers - users can run commands without authentication"
+            # Log each offending line
+            echo "${NOPASSWD_LINES}" | while read -r LINE; do
+                [ -n "${LINE}" ] && LogText "  NOPASSWD line: ${LINE}"
+            done
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-SUDO-002: Sudo logging
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-SUDO-002" --weight M --network NO \
+        --category security --description "Check if sudo logging is enabled"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        LOG_ENABLED="no"
+
+        if ReadSudoers | grep -qi "Defaults.*logfile\|Defaults.*log_output\|Defaults.*iolog_dir"; then
+            LOG_ENABLED="yes"
+        fi
+
+        LogText "Result: Sudo logging enabled = ${LOG_ENABLED}"
+        Report "sudo_log_enabled=${LOG_ENABLED}"
+
+        if [ "${LOG_ENABLED}" = "yes" ]; then
+            Display --indent 4 --text "- Sudo logging" --result "ENABLED" --color GREEN
+        else
+            Display --indent 4 --text "- Sudo logging" --result "DISABLED" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "Enable sudo logging with 'Defaults logfile=/var/log/sudo.log' in sudoers"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-SUDO-003: requiretty
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-SUDO-003" --weight L --network NO \
+        --category security --description "Check sudo requiretty setting"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        REQUIRETTY="no"
+
+        if ReadSudoers | grep -qi "Defaults.*requiretty"; then
+            REQUIRETTY="yes"
+        fi
+
+        LogText "Result: sudo requiretty = ${REQUIRETTY}"
+        Report "sudo_requiretty=${REQUIRETTY}"
+
+        if [ "${REQUIRETTY}" = "yes" ]; then
+            Display --indent 4 --text "- Sudo requiretty" --result "ENABLED" --color GREEN
+        else
+            Display --indent 4 --text "- Sudo requiretty" --result "DISABLED" --color WHITE
+            ReportSuggestion "${TEST_NO}" "Consider enabling 'Defaults requiretty' in sudoers for additional security"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-SUDO-004: Wildcard commands in sudoers
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-SUDO-004" --weight H --network NO \
+        --category security --description "Check for wildcard ALL commands in sudoers"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        # Look for lines granting ALL commands (not to root from root)
+        WILDCARD_COUNT=$(ReadSudoers | grep -v "^root" | grep -c "= *ALL\b\|=(ALL)" 2>/dev/null || echo 0)
+
+        LogText "Result: sudoers wildcard command entries = ${WILDCARD_COUNT}"
+        Report "sudoers_wildcard_commands=${WILDCARD_COUNT}"
+
+        if [ "${WILDCARD_COUNT}" -le 1 ] 2>/dev/null; then
+            Display --indent 4 --text "- Sudoers wildcard commands" --result "OK (${WILDCARD_COUNT})" --color GREEN
+        else
+            Display --indent 4 --text "- Sudoers wildcard commands" --result "${WILDCARD_COUNT} FOUND" --color YELLOW
+            ReportSuggestion "${TEST_NO}" "Review sudoers wildcard (ALL) command grants - limit to specific commands"
+        fi
+    fi
+
+fi # end phase 1

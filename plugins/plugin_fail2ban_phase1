@@ -1,0 +1,136 @@
+#!/bin/sh
+
+#################################################################################
+#
+# Lynis Custom Plugin - Fail2Ban
+# Plugin ID:    CUS-F2B
+# Description:  Checks Fail2Ban status fields missing from default Lynis report:
+#               - fail2ban_running
+#               - fail2ban_enabled_jails
+#               - fail2ban_ssh_jail
+#
+# Author:       Custom
+# License:      GPL
+# Version:      1.0.0
+#
+# Usage:        Enable plugin in profile:
+#               plugin=plugin_fail2ban_phase1
+#
+#################################################################################
+
+PLUGIN_NAME="Fail2Ban"
+PLUGIN_AUTHOR="Custom"
+PLUGIN_VERSION="1.0.0"
+PLUGIN_ID="CUS-F2B"
+PLUGIN_REQUIRED_OS="Linux"
+
+if [ "${PLUGIN_PHASE}" = "1" ]; then
+
+    InsertSection "Custom Plugin: Fail2Ban"
+
+    # ------------------------------------------------------------------
+    # CUS-F2B-001: Fail2Ban running
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-F2B-001" --weight H --network NO \
+        --category security --description "Check if Fail2Ban is running"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        F2B_RUNNING=0
+        F2B_STATUS="not_running"
+
+        # Check via systemctl
+        if IsRunning fail2ban; then
+            F2B_RUNNING=1
+            F2B_STATUS="running"
+        # Check via process name
+        elif ${PSBINARY} ax 2>/dev/null | grep -q "[f]ail2ban"; then
+            F2B_RUNNING=1
+            F2B_STATUS="running"
+        fi
+
+        LogText "Result: Fail2Ban running = ${F2B_STATUS}"
+        Report "fail2ban_running=${F2B_STATUS}"
+
+        if [ ${F2B_RUNNING} -eq 1 ]; then
+            Display --indent 4 --text "- Fail2Ban running" --result "YES" --color GREEN
+        else
+            Display --indent 4 --text "- Fail2Ban running" --result "NO" --color RED
+            ReportWarning "${TEST_NO}" "Fail2Ban is not running - system is not protected against brute-force attacks"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-F2B-002: Fail2Ban SSH jail active
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-F2B-002" --weight M --network NO \
+        --category security --description "Check if Fail2Ban SSH jail is active"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        SSH_JAIL="unknown"
+        ENABLED_JAILS=""
+
+        if [ ${F2B_RUNNING} -eq 1 ]; then
+            # Get active jails via fail2ban-client if available
+            if HasData $(which fail2ban-client 2>/dev/null); then
+                JAILS=$(fail2ban-client status 2>/dev/null | grep "Jail list" | sed 's/.*Jail list:\s*//' | tr ',' '\n' | tr -d ' ')
+                if echo "${JAILS}" | grep -qi "ssh"; then
+                    SSH_JAIL="active"
+                else
+                    SSH_JAIL="inactive"
+                fi
+                ENABLED_JAILS=$(echo "${JAILS}" | tr '\n' ',' | sed 's/,$//')
+            else
+                SSH_JAIL="unknown"
+            fi
+        else
+            SSH_JAIL="fail2ban_not_running"
+        fi
+
+        LogText "Result: Fail2Ban SSH jail = ${SSH_JAIL}"
+        Report "fail2ban_ssh_jail=${SSH_JAIL}"
+        [ -n "${ENABLED_JAILS}" ] && Report "fail2ban_enabled_jails=${ENABLED_JAILS}"
+
+        case "${SSH_JAIL}" in
+            "active")
+                Display --indent 4 --text "- Fail2Ban SSH jail" --result "ACTIVE" --color GREEN
+                ;;
+            "inactive")
+                Display --indent 4 --text "- Fail2Ban SSH jail" --result "INACTIVE" --color YELLOW
+                ReportSuggestion "${TEST_NO}" "Enable Fail2Ban SSH jail to block brute-force attempts"
+                ;;
+            *)
+                Display --indent 4 --text "- Fail2Ban SSH jail" --result "${SSH_JAIL}" --color WHITE
+                ;;
+        esac
+    fi
+
+    # ------------------------------------------------------------------
+    # CUS-F2B-003: Fail2Ban ban time
+    # ------------------------------------------------------------------
+    Register --test-no "CUS-F2B-003" --weight L --network NO \
+        --category security --description "Check Fail2Ban ban time configuration"
+
+    if [ ${SKIPTEST} -eq 0 ]; then
+        BANTIME="unknown"
+        F2B_CONF="/etc/fail2ban/jail.conf"
+        F2B_LOCAL="/etc/fail2ban/jail.local"
+
+        # Prefer jail.local over jail.conf
+        for CONF in "${F2B_LOCAL}" "${F2B_CONF}"; do
+            if [ -f "${CONF}" ]; then
+                BT=$(grep -i "^bantime" "${CONF}" 2>/dev/null | head -1 | awk '{print $3}')
+                [ -n "${BT}" ] && BANTIME="${BT}" && break
+            fi
+        done
+
+        LogText "Result: Fail2Ban bantime = ${BANTIME}"
+        Report "fail2ban_bantime=${BANTIME}"
+
+        if [ "${BANTIME}" != "unknown" ]; then
+            Display --indent 4 --text "- Fail2Ban bantime" --result "${BANTIME}s" --color GREEN
+        else
+            Display --indent 4 --text "- Fail2Ban bantime" --result "unknown" --color WHITE
+        fi
+    fi
+
+fi # end phase 1
