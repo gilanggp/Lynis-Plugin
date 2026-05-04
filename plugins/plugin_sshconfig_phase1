@@ -1,27 +1,24 @@
 #!/bin/sh
 
-#################################################################################
+#########################################################################
 #
-# Lynis Custom Plugin - SSH Security
-# Plugin ID:    CUS-SSH
-# Description:  Checks SSH configuration fields missing from default Lynis report:
-#               - ssh_password_authentication
-#               - ssh_pubkey_authentication
-#               - ssh_permit_root_login
-#               - ssh_max_auth_tries
-#               - ssh_port
+#    * DO NOT REMOVE *
+#-----------------------------------------------------
+# PLUGIN_AUTHOR=gilang gigih <gigih136@gmail.com>
+# PLUGIN_CATEGORY=essentials
+# PLUGIN_DATE=2025-05-04
+# PLUGIN_DESC=ssh config fields 
+# PLUGIN_NAME=sshconfig
+# PLUGIN_PACKAGE=community
+# PLUGIN_REQUIRED_TESTS=
+# PLUGIN_VERSION=1.0.0
+#-----------------------------------------------------
 #
-# Author:       Custom
-# License:      GPL
-# Version:      1.0.0
+#########################################################################
 #
-# Usage:        Enable plugin in profile:
-#               plugin=plugin_ssh_security_phase1
-#
-#################################################################################
 
 PLUGIN_NAME="SSH Security"
-PLUGIN_AUTHOR="Custom"
+PLUGIN_AUTHOR="gilang gigih"
 PLUGIN_VERSION="1.0.0"
 PLUGIN_ID="CUS-SSH"
 PLUGIN_REQUIRED_OS="Linux"

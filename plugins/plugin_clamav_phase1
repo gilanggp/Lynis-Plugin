@@ -1,27 +1,25 @@
 #!/bin/sh
 
-#################################################################################
+#########################################################################
 #
-# Lynis Custom Plugin - ClamAV Antivirus
-# Plugin ID:    CUS-CLAM
-# Description:  Checks ClamAV fields missing from default Lynis report:
-#               - clamav_definitions_age_hours
-#               - clamav_last_scan_date
-#               - clamav_last_scan_result
-#               - clamav_daemon_running
-#               - clamav_freshclam_running
+#    * DO NOT REMOVE *
+#-----------------------------------------------------
+# PLUGIN_AUTHOR=gilang gigih <gigih136@gmail.com>
+# PLUGIN_CATEGORY=essentials
+# PLUGIN_DATE=2025-05-04
+# PLUGIN_DESC=clamav fields 
+# PLUGIN_NAME=clamav
+# PLUGIN_PACKAGE=community
+# PLUGIN_REQUIRED_TESTS=
+# PLUGIN_VERSION=1.0.0
+#-----------------------------------------------------
 #
-# Author:       Custom
-# License:      GPL
-# Version:      1.0.0
+#########################################################################
 #
-# Usage:        Enable plugin in profile:
-#               plugin=plugin_clamav_phase1
-#
-#################################################################################
 
-PLUGIN_NAME="ClamAV Antivirus"
-PLUGIN_AUTHOR="Custom"
+
+PLUGIN_NAME="ClamAV"
+PLUGIN_AUTHOR="gilang gigih"
 PLUGIN_VERSION="1.0.0"
 PLUGIN_ID="CUS-CLAM"
 PLUGIN_REQUIRED_OS="Linux"
