@@ -1,0 +1,158 @@
+#!/bin/sh
+
+#########################################################################
+#
+#    * DO NOT REMOVE *
+#-----------------------------------------------------
+# PLUGIN_AUTHOR=gilang gigih <gigih136@gmail.com>
+# PLUGIN_CATEGORY=essentials
+# PLUGIN_DATE=2025-05-05
+# PLUGIN_DESC=nginx fields 
+# PLUGIN_NAME=nginx
+# PLUGIN_PACKAGE=community
+# PLUGIN_REQUIRED_TESTS=
+# PLUGIN_VERSION=1.0.0
+#-----------------------------------------------------
+#
+#########################################################################
+#
+
+# Plugin metadata — must match Lynis plugin convention
+PLUGIN_AUTHOR="gilang gigih"
+PLUGIN_VERSION="1.0.0"
+PLUGIN_NAME="nginx"
+
+InsertPlugin() { true; }
+
+#################################################################################
+# Helper: check if a header exists across all nginx site configs
+#################################################################################
+
+NGINX_CONF_DIR="/etc/nginx"
+NGINX_SITES_DIR="${NGINX_CONF_DIR}/sites-enabled"
+NGINX_MAIN_CONF="${NGINX_CONF_DIR}/nginx.conf"
+
+# Collect all nginx config files into a single list
+ALL_NGINX_CONFS=""
+if [ -f "${NGINX_MAIN_CONF}" ]; then
+    ALL_NGINX_CONFS="${NGINX_MAIN_CONF}"
+fi
+if [ -d "${NGINX_SITES_DIR}" ]; then
+    for f in "${NGINX_SITES_DIR}"/*; do
+        [ -f "$f" ] && ALL_NGINX_CONFS="${ALL_NGINX_CONFS} $f"
+    done
+fi
+if [ -d "${NGINX_CONF_DIR}/conf.d" ]; then
+    for f in "${NGINX_CONF_DIR}/conf.d"/*.conf; do
+        [ -f "$f" ] && ALL_NGINX_CONFS="${ALL_NGINX_CONFS} $f"
+    done
+fi
+
+#################################################################################
+# 1. http_x_frame_options
+#    Pass: any nginx config contains add_header X-Frame-Options
+#################################################################################
+
+HTTP_X_FRAME_OPTIONS=0
+if [ -n "${ALL_NGINX_CONFS}" ]; then
+    if grep -qiE "add_header\s+X-Frame-Options" ${ALL_NGINX_CONFS} 2>/dev/null; then
+        HTTP_X_FRAME_OPTIONS=1
+    fi
+fi
+LogText "Result: http_x_frame_options=${HTTP_X_FRAME_OPTIONS}"
+Report "http_x_frame_options=${HTTP_X_FRAME_OPTIONS}"
+
+#################################################################################
+# 2. http_strict_transport_security
+#    Pass: any nginx config contains add_header Strict-Transport-Security
+#################################################################################
+
+HTTP_STRICT_TRANSPORT_SECURITY=0
+if [ -n "${ALL_NGINX_CONFS}" ]; then
+    if grep -qiE "add_header\s+Strict-Transport-Security" ${ALL_NGINX_CONFS} 2>/dev/null; then
+        HTTP_STRICT_TRANSPORT_SECURITY=1
+    fi
+fi
+LogText "Result: http_strict_transport_security=${HTTP_STRICT_TRANSPORT_SECURITY}"
+Report "http_strict_transport_security=${HTTP_STRICT_TRANSPORT_SECURITY}"
+
+#################################################################################
+# 3. http_x_content_type_options
+#    Pass: any nginx config contains add_header X-Content-Type-Options
+#################################################################################
+
+HTTP_X_CONTENT_TYPE_OPTIONS=0
+if [ -n "${ALL_NGINX_CONFS}" ]; then
+    if grep -qiE "add_header\s+X-Content-Type-Options" ${ALL_NGINX_CONFS} 2>/dev/null; then
+        HTTP_X_CONTENT_TYPE_OPTIONS=1
+    fi
+fi
+LogText "Result: http_x_content_type_options=${HTTP_X_CONTENT_TYPE_OPTIONS}"
+Report "http_x_content_type_options=${HTTP_X_CONTENT_TYPE_OPTIONS}"
+
+#################################################################################
+# 4. http_referrer_policy
+#    Pass: any nginx config contains add_header Referrer-Policy
+#################################################################################
+
+HTTP_REFERRER_POLICY=0
+if [ -n "${ALL_NGINX_CONFS}" ]; then
+    if grep -qiE "add_header\s+Referrer-Policy" ${ALL_NGINX_CONFS} 2>/dev/null; then
+        HTTP_REFERRER_POLICY=1
+    fi
+fi
+LogText "Result: http_referrer_policy=${HTTP_REFERRER_POLICY}"
+Report "http_referrer_policy=${HTTP_REFERRER_POLICY}"
+
+#################################################################################
+# 5. web_server_version_exposed
+#    Pass (0 = not exposed): server_tokens is set to 'off' in nginx config
+#    Fail (1 = exposed): server_tokens missing or set to 'on'
+#################################################################################
+
+WEB_SERVER_VERSION_EXPOSED=1
+if [ -n "${ALL_NGINX_CONFS}" ]; then
+    if grep -qiE "server_tokens\s+off" ${ALL_NGINX_CONFS} 2>/dev/null; then
+        WEB_SERVER_VERSION_EXPOSED=0
+    fi
+fi
+LogText "Result: web_server_version_exposed=${WEB_SERVER_VERSION_EXPOSED}"
+Report "web_server_version_exposed=${WEB_SERVER_VERSION_EXPOSED}"
+
+#################################################################################
+# 6. web_server_directory_listing
+#    Pass (0 = listing disabled): no 'autoindex on' found in nginx configs
+#    Fail (1 = listing enabled): 'autoindex on' found
+#################################################################################
+
+WEB_SERVER_DIRECTORY_LISTING=0
+if [ -n "${ALL_NGINX_CONFS}" ]; then
+    if grep -qiE "autoindex\s+on" ${ALL_NGINX_CONFS} 2>/dev/null; then
+        WEB_SERVER_DIRECTORY_LISTING=1
+    fi
+fi
+LogText "Result: web_server_directory_listing=${WEB_SERVER_DIRECTORY_LISTING}"
+Report "web_server_directory_listing=${WEB_SERVER_DIRECTORY_LISTING}"
+
+#################################################################################
+# 7. ssl_tls_weak_protocol
+#    Flag if TLSv1 or TLSv1.1 is still enabled in nginx ssl_protocols directive
+#    0 = only strong protocols (TLS 1.2+)
+#    1 = weak protocols present
+#################################################################################
+
+SSL_TLS_WEAK_PROTOCOL=0
+if [ -n "${ALL_NGINX_CONFS}" ]; then
+    # Check for TLSv1 or TLSv1.1 being explicitly listed (but not TLSv1.2/1.3)
+    if grep -qiE "ssl_protocols.*[^.](TLSv1|TLSv1\.1)[^.]" ${ALL_NGINX_CONFS} 2>/dev/null; then
+        SSL_TLS_WEAK_PROTOCOL=1
+    fi
+fi
+LogText "Result: ssl_tls_weak_protocol=${SSL_TLS_WEAK_PROTOCOL}"
+Report "ssl_tls_weak_protocol=${SSL_TLS_WEAK_PROTOCOL}"
+
+#################################################################################
+# Done
+#################################################################################
+
+LogText "Web server security plugin completed"
